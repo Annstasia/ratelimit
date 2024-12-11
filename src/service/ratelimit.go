@@ -34,7 +34,10 @@ var tracer = otel.Tracer("ratelimit")
 type RateLimitServiceServer interface {
 	pb.RateLimitServiceServer
 	GetCurrentConfig() (config.RateLimitConfig, bool)
-	SetConfig(updateEvent provider.ConfigUpdateEvent, healthyWithAtLeastOneConfigLoad bool)
+	SetConfig(
+		updateEvent provider.ConfigUpdateEvent,
+		healthyWithAtLeastOneConfigLoad bool,
+	)
 }
 
 type service struct {
@@ -52,8 +55,13 @@ type service struct {
 	globalShadowMode            bool
 }
 
-func (this *service) SetConfig(updateEvent provider.ConfigUpdateEvent, healthyWithAtLeastOneConfigLoad bool) {
+func (this *service) SetConfig(
+	updateEvent provider.ConfigUpdateEvent,
+	healthyWithAtLeastOneConfigLoad bool,
+) {
+	logger.Error("SETTING THE CONFIG")
 	newConfig, err := updateEvent.GetConfig()
+	logger.Error("CONFIG", newConfig)
 	if err != nil {
 		configError, ok := err.(config.RateLimitConfigError)
 		if !ok {
@@ -61,7 +69,9 @@ func (this *service) SetConfig(updateEvent provider.ConfigUpdateEvent, healthyWi
 		}
 
 		this.stats.ConfigLoadError.Inc()
-		logger.Errorf("Error loading new configuration: %s", configError.Error())
+		logger.Errorf(
+			"Error loading new configuration: %s", configError.Error(),
+		)
 		return
 	}
 
@@ -110,7 +120,10 @@ func checkServiceErr(something bool, msg string) {
 	}
 }
 
-func (this *service) constructLimitsToCheck(request *pb.RateLimitRequest, ctx context.Context, snappedConfig config.RateLimitConfig) ([]*config.RateLimit, []bool) {
+func (this *service) constructLimitsToCheck(
+	request *pb.RateLimitRequest, ctx context.Context,
+	snappedConfig config.RateLimitConfig,
+) ([]*config.RateLimit, []bool) {
 	checkServiceErr(snappedConfig != nil, "no rate limit configuration loaded")
 
 	limitsToCheck := make([]*config.RateLimit, len(request.Descriptors))
@@ -124,12 +137,18 @@ func (this *service) constructLimitsToCheck(request *pb.RateLimitRequest, ctx co
 			for _, descriptorEntry := range descriptor.GetEntries() {
 				descriptorEntryStrings = append(
 					descriptorEntryStrings,
-					fmt.Sprintf("(%s=%s)", descriptorEntry.Key, descriptorEntry.Value),
+					fmt.Sprintf(
+						"(%s=%s)", descriptorEntry.Key, descriptorEntry.Value,
+					),
 				)
 			}
-			logger.Debugf("got descriptor: %s", strings.Join(descriptorEntryStrings, ","))
+			logger.Debugf(
+				"got descriptor: %s", strings.Join(descriptorEntryStrings, ","),
+			)
 		}
-		limitsToCheck[i] = snappedConfig.GetLimit(ctx, request.Domain, descriptor)
+		limitsToCheck[i] = snappedConfig.GetLimit(
+			ctx, request.Domain, descriptor,
+		)
 		if logger.IsLevelEnabled(logger.DebugLevel) {
 			if limitsToCheck[i] == nil {
 				logger.Debugf("descriptor does not match any limit, no limits applied")
@@ -180,16 +199,25 @@ func (this *service) shouldRateLimitWorker(
 	ctx context.Context, request *pb.RateLimitRequest,
 ) *pb.RateLimitResponse {
 	checkServiceErr(request.Domain != "", "rate limit domain must not be empty")
-	checkServiceErr(len(request.Descriptors) != 0, "rate limit descriptor list must not be empty")
+	checkServiceErr(
+		len(request.Descriptors) != 0,
+		"rate limit descriptor list must not be empty",
+	)
 
 	snappedConfig, globalShadowMode := this.GetCurrentConfig()
-	limitsToCheck, isUnlimited := this.constructLimitsToCheck(request, ctx, snappedConfig)
+	limitsToCheck, isUnlimited := this.constructLimitsToCheck(
+		request, ctx, snappedConfig,
+	)
 
-	responseDescriptorStatuses := this.cache.DoLimit(ctx, request, limitsToCheck)
+	responseDescriptorStatuses := this.cache.DoLimit(
+		ctx, request, limitsToCheck,
+	)
 	assert.Assert(len(limitsToCheck) == len(responseDescriptorStatuses))
 
 	response := &pb.RateLimitResponse{}
-	response.Statuses = make([]*pb.RateLimitResponse_DescriptorStatus, len(request.Descriptors))
+	response.Statuses = make(
+		[]*pb.RateLimitResponse_DescriptorStatus, len(request.Descriptors),
+	)
 	finalCode := pb.RateLimitResponse_OK
 
 	// Keep track of the descriptor which is closest to hit the ratelimit
@@ -244,8 +272,10 @@ func (this *service) rateLimitLimitHeader(descriptor *pb.RateLimitResponse_Descr
 	// Limit header only provides the mandatory part from the spec, the actual limit
 	// the optional quota policy is currently not provided
 	return &core.HeaderValue{
-		Key:   this.customHeaderLimitHeader,
-		Value: strconv.FormatUint(uint64(descriptor.CurrentLimit.RequestsPerUnit), 10),
+		Key: this.customHeaderLimitHeader,
+		Value: strconv.FormatUint(
+			uint64(descriptor.CurrentLimit.RequestsPerUnit), 10,
+		),
 	}
 }
 
@@ -261,8 +291,12 @@ func (this *service) rateLimitResetHeader(
 	descriptor *pb.RateLimitResponse_DescriptorStatus,
 ) *core.HeaderValue {
 	return &core.HeaderValue{
-		Key:   this.customHeaderResetHeader,
-		Value: strconv.FormatInt(utils.CalculateReset(&descriptor.CurrentLimit.Unit, this.customHeaderClock).GetSeconds(), 10),
+		Key: this.customHeaderResetHeader,
+		Value: strconv.FormatInt(
+			utils.CalculateReset(
+				&descriptor.CurrentLimit.Unit, this.customHeaderClock,
+			).GetSeconds(), 10,
+		),
 	}
 }
 
@@ -271,7 +305,8 @@ func (this *service) ShouldRateLimit(
 	request *pb.RateLimitRequest,
 ) (finalResponse *pb.RateLimitResponse, finalError error) {
 	// Generate trace
-	_, span := tracer.Start(ctx, "ShouldRateLimit Execution",
+	_, span := tracer.Start(
+		ctx, "ShouldRateLimit Execution",
 		trace.WithAttributes(
 			attribute.String("domain", request.Domain),
 			attribute.String("request string", request.String()),
@@ -316,8 +351,11 @@ func (this *service) GetCurrentConfig() (config.RateLimitConfig, bool) {
 	return this.config, this.globalShadowMode
 }
 
-func NewService(cache limiter.RateLimitCache, configProvider provider.RateLimitConfigProvider, statsManager stats.Manager,
-	health *server.HealthChecker, clock utils.TimeSource, shadowMode, forceStart bool, healthyWithAtLeastOneConfigLoad bool,
+func NewService(
+	cache limiter.RateLimitCache,
+	configProvider provider.RateLimitConfigProvider, statsManager stats.Manager,
+	health *server.HealthChecker, clock utils.TimeSource,
+	shadowMode, forceStart bool, healthyWithAtLeastOneConfigLoad bool,
 ) RateLimitServiceServer {
 	newService := &service{
 		configLock:        sync.RWMutex{},
@@ -332,7 +370,9 @@ func NewService(cache limiter.RateLimitCache, configProvider provider.RateLimitC
 
 	if !forceStart {
 		logger.Info("Waiting for initial ratelimit config update event")
-		newService.SetConfig(<-newService.configUpdateEvent, healthyWithAtLeastOneConfigLoad)
+		newService.SetConfig(
+			<-newService.configUpdateEvent, healthyWithAtLeastOneConfigLoad,
+		)
 		logger.Info("Successfully loaded the initial ratelimit configs")
 	}
 

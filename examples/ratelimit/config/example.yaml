@@ -1,5 +1,36 @@
 ---
 domain: rl
+static-groups:
+  - metricsql: sum(rate(istio_request_duration_milliseconds_count{app="cat"}[5m])) < bool sum(rate(istio_request_duration_milliseconds_count{app="cat"}[10m]))
+    descriptors:
+      - key: PATH
+        value: "/get"
+        rate_limit:
+          unit: minute
+          requests_per_unit: 1000
+      - key: user
+        value: GOD
+        rate_limit:
+          unit: minute
+          requests_per_unit: 10
+      - key: user
+        value: HUMAN
+        rate_limit:
+          unit: minute
+          requests_per_unit: 1
+      - key: PATH
+        rate_limit:
+          unit: minute
+          requests_per_unit: 10
+
+dynamic-groups:
+  - metricsql: sum(rate(istio_request_duration_milliseconds_count{app="cat"}[5m])) < bool sum(rate(istio_request_duration_milliseconds_count{app="cat"}[10m]))
+    descriptors:
+      - key: PATH
+        value: "/get"
+        limit_multiplier: 0.5
+    freeze_time: 3m
+
 descriptors:
   - key: category
     value: account
